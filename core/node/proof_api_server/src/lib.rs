@@ -1,0 +1,6 @@
+
+pub MockStruct {
+  store: &str
+}
+
+

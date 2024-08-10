@@ -46,6 +46,7 @@ use zksync_node_framework::{
         pools_layer::PoolsLayerBuilder,
         postgres_metrics::PostgresMetricsLayer,
         prometheus_exporter::PrometheusExporterLayer,
+        proof_api::MockStructLayer,
         proof_data_handler::ProofDataHandlerLayer,
         query_eth_client::QueryEthClientLayer,
         sigint::SigintHandlerLayer,
@@ -633,6 +634,12 @@ impl MainNodeBuilder {
         Ok(self)
     }
 
+    fn add_proof_api_layer(mut self) -> anyhow::Result<Self> {
+        self.node.add_layer(MockStructLayer::new());
+
+        Ok(self)
+    }
+
     /// Builds the node with the genesis initialization task only.
     pub fn only_genesis(mut self) -> anyhow::Result<ZkStackService> {
         self = self
@@ -654,8 +661,8 @@ impl MainNodeBuilder {
             .add_healthcheck_layer()?
             .add_prometheus_exporter_layer()?
             .add_query_eth_client_layer()?
-            .add_gas_adjuster_layer()?;
-
+            .add_gas_adjuster_layer()?
+            .add_proof_api_layer()?;
         // Add preconditions for all the components.
         self = self
             .add_l1_batch_commitment_mode_validation_layer()?

@@ -89,6 +89,7 @@ impl WiringLayer for EthTxAggregatorLayer {
     }
 
     async fn wire(self, input: Self::Input) -> Result<Self::Output, WiringError> {
+        println!("\n\nWIRIIIINNGGGGGG {:?} \n\n", input);
         // Get resources.
         let master_pool = input.master_pool.get().await.unwrap();
         let replica_pool = input.replica_pool.get().await.unwrap();
