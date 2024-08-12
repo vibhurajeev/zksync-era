@@ -1,10 +1,13 @@
-use std::{borrow::Borrow, sync::Arc, time::Duration};
+use std::{
+    //borrow::Borrow,
+    //sync::Arc,
+    time::Duration,
+};
 
 use tokio::time::sleep;
 use zksync_dal::{ConnectionPool, Core, CoreDal};
-use zksync_object_store::{ObjectStore, ObjectStoreError};
-use zksync_prover_interface::outputs::L1BatchProofForL1;
-use zksync_types::protocol_version::{L1VerifierConfig, ProtocolSemanticVersion};
+//use zksync_prover_interface::outputs::L1BatchProofForL1;
+//use zksync_types::protocol_version::{L1VerifierConfig, ProtocolSemanticVersion};
 
 use crate::{
     implementations::resources::{
@@ -16,7 +19,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct MockStruct {
-    blob_store: Arc<dyn ObjectStore>,
+    //blob_store: Arc<dyn ObjectStore>,
     pool: ConnectionPool<Core>,
     // l1_verifier_config: L1VerifierConfig,
 }
@@ -29,14 +32,20 @@ impl MockStructLayer {
     }
 }
 
+impl Default for MockStructLayer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MockStruct {
     pub fn new(
-        blob_store: Arc<dyn ObjectStore>,
+        //blob_store: Arc<dyn ObjectStore>,
         pool: ConnectionPool<Core>,
         //  l1_verifier_config: L1VerifierConfig,
     ) -> Self {
         Self {
-            blob_store,
+            //  blob_store,
             pool,
             //  l1_verifier_config,
         }
@@ -72,7 +81,10 @@ impl WiringLayer for MockStructLayer {
         let master_pool = input.master_pool.get().await.unwrap();
 
         Ok(Output {
-            mock: MockStruct::new(input.object_store.0, master_pool),
+            mock: MockStruct::new(
+                //input.object_store.0,
+                master_pool,
+            ),
         })
     }
 }
