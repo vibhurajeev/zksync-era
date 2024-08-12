@@ -1,6 +1,0 @@
-
-pub MockStruct {
-  store: &str
-}
-
-
