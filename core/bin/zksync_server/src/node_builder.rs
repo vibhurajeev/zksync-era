@@ -635,7 +635,10 @@ impl MainNodeBuilder {
     }
 
     fn add_proof_api_layer(mut self) -> anyhow::Result<Self> {
-        self.node.add_layer(MockStructLayer::new());
+        let eth_sender_config = try_load_config!(self.configs.eth);
+        self.node.add_layer(MockStructLayer::new(
+            eth_sender_config
+        ));
 
         Ok(self)
     }
