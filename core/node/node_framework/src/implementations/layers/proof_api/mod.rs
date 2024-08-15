@@ -1,3 +1,4 @@
+use std::convert::Infallible;
 use std::{
     //borrow::Borrow,
     //sync::Arc,
@@ -5,7 +6,10 @@ use std::{
     time::Duration,
 };
 
+//Server related
+use serde::Serialize;
 use tokio::time::sleep;
+use warp::{http::StatusCode, Filter};
 use zksync_dal::{ConnectionPool, Core, CoreDal};
 use zksync_types::{commitment::L1BatchWithMetadata, L1BatchNumber};
 
@@ -18,12 +22,6 @@ use crate::{
     },
     FromContext, IntoContext, StopReceiver, Task, TaskId, WiringError, WiringLayer,
 };
-
-//Server related
-use serde::Serialize;
-use std::convert::Infallible;
-use warp::http::StatusCode;
-use warp::Filter;
 
 #[derive(Debug, Clone)]
 pub struct MockStruct {
