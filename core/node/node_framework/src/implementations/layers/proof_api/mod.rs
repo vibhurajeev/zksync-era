@@ -1,14 +1,16 @@
 use std::{
     //borrow::Borrow,
     //sync::Arc,
+    collections::HashMap,
     time::Duration,
 };
 
 use tokio::time::sleep;
 use zksync_dal::{ConnectionPool, Core, CoreDal};
+use zksync_types::{commitment::L1BatchWithMetadata, L1BatchNumber};
+
 //use zksync_prover_interface::outputs::L1BatchProofForL1;
 //use zksync_types::protocol_version::{L1VerifierConfig, ProtocolSemanticVersion};
-
 use crate::{
     implementations::resources::{
         object_store::ObjectStoreResource,
@@ -17,7 +19,13 @@ use crate::{
     FromContext, IntoContext, StopReceiver, Task, TaskId, WiringError, WiringLayer,
 };
 
-#[derive(Debug)]
+//Server related
+use serde::Serialize;
+use std::convert::Infallible;
+use warp::http::StatusCode;
+use warp::Filter;
+
+#[derive(Debug, Clone)]
 pub struct MockStruct {
     //blob_store: Arc<dyn ObjectStore>,
     pool: ConnectionPool<Core>,
@@ -49,6 +57,25 @@ impl MockStruct {
             pool,
             //  l1_verifier_config,
         }
+    }
+
+    pub async fn get_metadata(
+        &self,
+        batch_number: u32,
+    ) -> Result<Option<L1BatchWithMetadata>, String> {
+        let mut storage = self
+            .pool
+            .connection_tagged("proof_api")
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let metadata = storage
+            .blocks_dal()
+            .get_l1_batch_metadata(L1BatchNumber(batch_number))
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(metadata)
     }
 }
 
@@ -96,99 +123,52 @@ impl Task for MockStruct {
     }
 
     async fn run(self: Box<Self>, stop_receiver: StopReceiver) -> anyhow::Result<()> {
-        loop {
-            let mut storage = self.pool.connection_tagged("proof_api").await.unwrap();
+        let api = warp::path("metadata")
+            .and(warp::query::<std::collections::HashMap<String, String>>())
+            .and(warp::any().map(move || self.clone()))
+            .and_then(
+                |params: HashMap<String, String>, mock_struct: Box<MockStruct>| async move {
+                    let l1_batch_number = params
+                        .get("l1BatchNumber")
+                        .and_then(|n| n.parse::<u32>().ok())
+                        .unwrap_or(0);
 
-            println!("\nInside mock struct loop: ✅\n");
-            // Example operation: sleeping for a short duration
+                    let metadata = mock_struct
+                        .get_metadata(l1_batch_number)
+                        .await
+                        .unwrap_or_else(|_| None);
 
-            let previous_proven_batch_number = storage
-                .blocks_dal()
-                .get_last_l1_batch_with_prove_tx()
-                .await
-                .unwrap();
-            let batch_to_prove = previous_proven_batch_number + 1;
-
-            // let minor_version = storage
-            //     .blocks_dal()
-            //     .get_batch_protocol_version_id(batch_to_prove)
-            //     .await
-            //     .unwrap();
-
-            // // `l1_verifier_config.recursion_scheduler_level_vk_hash` is a VK hash that L1 uses.
-            // // We may have multiple versions with different verification keys, so we check only for proofs that use
-            // // keys that correspond to one on L1.
-            // let allowed_patch_versions = storage
-            //     .protocol_versions_dal()
-            //     .get_patch_versions_for_vk(
-            //         minor_version,
-            //         self.l1_verifier_config.recursion_scheduler_level_vk_hash,
-            //     )
-            //     .await
-            //     .unwrap();
-            // if allowed_patch_versions.is_empty() {
-            //     tracing::warn!(
-            //         "No patch version corresponds to the verification key on L1: {:?}",
-            //         self.l1_verifier_config.recursion_scheduler_level_vk_hash
-            //     );
-
-            //     continue;
-            // };
-
-            // let allowed_versions: Vec<_> = allowed_patch_versions
-            //     .into_iter()
-            //     .map(|patch| ProtocolSemanticVersion {
-            //         minor: minor_version,
-            //         patch,
-            //     })
-            //     .collect();
-
-            // let mut proof: Option<L1BatchProofForL1> = None;
-
-            // for version in &allowed_versions {
-            //     match self.blob_store.get((batch_to_prove, *version)).await {
-            //         Ok(p) => {
-            //             proof = Some(p);
-            //             break;
-            //         }
-            //         Err(ObjectStoreError::KeyNotFound(_)) => (), // do nothing, proof is not ready yet
-            //         Err(err) => panic!(
-            //             "Failed to load proof for batch {}: {}",
-            //             batch_to_prove.0, err
-            //         ),
-            //     }
-            // }
-
-            // if proof.is_none() {
-            //     let is_patch_0_present = allowed_versions.iter().any(|v| v.patch.0 == 0);
-            //     if is_patch_0_present {
-            //         match self
-            //             .blob_store
-            //             .get_by_encoded_key(format!("l1_batch_proof_{batch_to_prove}.bin"))
-            //             .await
-            //         {
-            //             Ok(p) => proof = Some(p),
-            //             Err(ObjectStoreError::KeyNotFound(_)) => (), // do nothing, proof is not ready yet
-            //             Err(err) => panic!(
-            //                 "Failed to load proof for batch {}: {}",
-            //                 batch_to_prove.0, err
-            //             ),
-            //         }
-            //     }
-            // }
-
-            println!(
-                "\n\n Batch to prove on ethereum:  {}\n Last batch: {}\n\n",
-                batch_to_prove, previous_proven_batch_number
+                    if let Some(metadata) = metadata {
+                        Ok::<warp::reply::WithStatus<warp::reply::Json>, Infallible>(
+                            warp::reply::with_status(warp::reply::json(&metadata), StatusCode::OK)
+                                as warp::reply::WithStatus<warp::reply::Json>,
+                        )
+                    } else {
+                        Ok(warp::reply::with_status(
+                            warp::reply::json(&metadata),
+                            StatusCode::NOT_FOUND,
+                        )
+                            as warp::reply::WithStatus<warp::reply::Json>)
+                    }
+                },
             );
 
-            sleep(Duration::from_secs(1)).await;
-            //self.
-            // Optionally check for stop signal and break if received
-            if *stop_receiver.0.borrow() {
-                break;
-            }
-        }
+        // Start the API server on a fixed port
+        let (_, server) =
+            warp::serve(api).bind_with_graceful_shutdown(([127, 0, 0, 1], 3030), async move {
+                loop {
+                    // Check if the stop signal has been received
+                    if *stop_receiver.0.borrow() {
+                        break;
+                    }
+                    sleep(Duration::from_secs(1)).await;
+                }
+            });
+
+        println!("API server is running on http://127.0.0.1:3030");
+
+        // Await the server to run until the stop signal is received
+        server.await;
 
         Ok(())
     }
