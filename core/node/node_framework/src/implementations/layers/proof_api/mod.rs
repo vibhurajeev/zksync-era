@@ -10,6 +10,7 @@ use std::{
 use serde::Serialize;
 use tokio::time::sleep;
 use warp::{http::StatusCode, Filter};
+use zksync_config::ApiConfig;
 use zksync_dal::{ConnectionPool, Core, CoreDal};
 use zksync_types::{commitment::L1BatchWithMetadata, L1BatchNumber};
 
@@ -27,32 +28,40 @@ use crate::{
 pub struct MockStruct {
     //blob_store: Arc<dyn ObjectStore>,
     pool: ConnectionPool<Core>,
+    port: u16,
     // l1_verifier_config: L1VerifierConfig,
 }
 
-pub struct MockStructLayer();
+pub struct MockStructLayer(pub u16);
 
 impl MockStructLayer {
-    pub fn new() -> Self {
-        Self()
+    pub fn new(api_configs: Option<ApiConfig>) -> Self {
+        let proof_api_port = match api_configs {
+            Some(i) => i.web3_json_rpc.http_port - 20,
+            None => 3030,
+        };
+
+        Self(proof_api_port)
     }
 }
 
-impl Default for MockStructLayer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// impl Default for MockStructLayer {
+//     fn default() -> Self {
+//         Self::new(3030)
+//     }
+// }
 
 impl MockStruct {
     pub fn new(
         //blob_store: Arc<dyn ObjectStore>,
         pool: ConnectionPool<Core>,
+        port: u16,
         //  l1_verifier_config: L1VerifierConfig,
     ) -> Self {
         Self {
             //  blob_store,
             pool,
+            port,
             //  l1_verifier_config,
         }
     }
@@ -104,11 +113,11 @@ impl WiringLayer for MockStructLayer {
         println!("\n\nACTUALLL WIRING {:#?}\n\n", input);
 
         let master_pool = input.master_pool.get().await.unwrap();
-
         Ok(Output {
             mock: MockStruct::new(
                 //input.object_store.0,
                 master_pool,
+                self.0,
             ),
         })
     }
@@ -121,6 +130,7 @@ impl Task for MockStruct {
     }
 
     async fn run(self: Box<Self>, stop_receiver: StopReceiver) -> anyhow::Result<()> {
+        let port = self.port;
         let api = warp::path("metadata")
             .and(warp::query::<std::collections::HashMap<String, String>>())
             .and(warp::any().map(move || self.clone()))
@@ -153,7 +163,7 @@ impl Task for MockStruct {
 
         // Start the API server on a fixed port
         let (_, server) =
-            warp::serve(api).bind_with_graceful_shutdown(([127, 0, 0, 1], 3030), async move {
+            warp::serve(api).bind_with_graceful_shutdown(([127, 0, 0, 1], port), async move {
                 loop {
                     // Check if the stop signal has been received
                     if *stop_receiver.0.borrow() {
@@ -163,7 +173,7 @@ impl Task for MockStruct {
                 }
             });
 
-        println!("API server is running on http://127.0.0.1:3030");
+        println!("API server is running on http://127.0.0.1:{}", port);
 
         // Await the server to run until the stop signal is received
         server.await;

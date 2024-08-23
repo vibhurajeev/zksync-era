@@ -635,7 +635,8 @@ impl MainNodeBuilder {
     }
 
     fn add_proof_api_layer(mut self) -> anyhow::Result<Self> {
-        self.node.add_layer(MockStructLayer::new());
+        self.node
+            .add_layer(MockStructLayer::new(self.configs.api_config.clone()));
 
         Ok(self)
     }
