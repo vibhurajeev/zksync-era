@@ -1,0 +1,13 @@
+id: 2
+name: era2
+chain_id: 272
+prover_version: NoProofs
+configs: ./chains/era2/configs/
+rocks_db_path: ./chains/era2/db/
+external_node_config_path: null
+l1_batch_commit_data_generator_mode: Rollup
+base_token:
+  address: '0x0000000000000000000000000000000000000001'
+  nominator: 1
+  denominator: 1
+wallet_creation: Localhost
