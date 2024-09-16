@@ -1,18 +1,14 @@
 use std::{
-    collections::HashMap,
     io::{BufWriter, Write as _},
     sync::Arc,
 };
 
-use circuit_definitions::circuit_definitions::{
-    base_layer::ZkSyncBaseLayerCircuit,
-    recursion_layer::{ZkSyncRecursionLayerStorageType, ZkSyncRecursionProof},
+use circuit_definitions::{
+    circuit_definitions::base_layer::ZkSyncBaseLayerCircuit,
+    encodings::memory_query::MemoryQueueStateWitnesses,
 };
 use once_cell::sync::Lazy;
-use zkevm_test_harness::{
-    boojum::field::goldilocks::GoldilocksField, empty_node_proof,
-    zkevm_circuits::scheduler::aux::BaseLayerCircuitType,
-};
+use zkevm_test_harness::boojum::field::goldilocks::GoldilocksField;
 use zksync_multivm::utils::get_used_bootloader_memory_bytes;
 use zksync_object_store::{serialize_using_bincode, Bucket, ObjectStore, StoredObject};
 use zksync_prover_fri_types::{
@@ -28,8 +24,8 @@ use zksync_prover_fri_types::{
         encodings::recursion_request::RecursionQueueSimulator,
         zkevm_circuits::scheduler::input::SchedulerCircuitInstanceWitness,
     },
-    keys::{AggregationsKey, ClosedFormInputKey, FriCircuitKey},
-    CircuitWrapper, FriProofWrapper,
+    keys::{AggregationsKey, ClosedFormInputKey, FriCircuitKey, RamPermutationQueueWitnessKey},
+    CircuitAuxData, CircuitWrapper, FriProofWrapper, RamPermutationQueueWitness,
 };
 use zksync_types::{basic_fri_types::AggregationRound, L1BatchNumber, ProtocolVersionId, U256};
 
@@ -97,32 +93,6 @@ impl StoredObject for AggregationWrapper {
     serialize_using_bincode!();
 }
 
-/// TODO: remove after transition
-#[derive(serde::Serialize, serde::Deserialize)]
-pub struct AggregationWrapperLegacy(
-    pub  Vec<(
-        u64,
-        RecursionQueueSimulator<GoldilocksField>,
-        ZkSyncRecursiveLayerCircuit,
-    )>,
-);
-
-impl StoredObject for AggregationWrapperLegacy {
-    const BUCKET: Bucket = Bucket::NodeAggregationWitnessJobsFri;
-    type Key<'a> = AggregationsKey;
-
-    fn encode_key(key: Self::Key<'_>) -> String {
-        let AggregationsKey {
-            block_number,
-            circuit_id,
-            depth,
-        } = key;
-        format!("aggregations_{block_number}_{circuit_id}_{depth}.bin")
-    }
-
-    serialize_using_bincode!();
-}
-
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct SchedulerPartialInputWrapper(
     pub  SchedulerCircuitInstanceWitness<
@@ -151,6 +121,7 @@ pub async fn save_circuit(
     block_number: L1BatchNumber,
     circuit: ZkSyncBaseLayerCircuit,
     sequence_number: usize,
+    aux_data_for_partial_circuit: Option<CircuitAuxData>,
     object_store: Arc<dyn ObjectStore>,
 ) -> (u8, String) {
     let circuit_id = circuit.numeric_circuit_type();
@@ -161,11 +132,44 @@ pub async fn save_circuit(
         aggregation_round: AggregationRound::BasicCircuits,
         depth: 0,
     };
-    let blob_url = object_store
-        .put(circuit_key, &CircuitWrapper::Base(circuit))
-        .await
-        .unwrap();
+
+    let blob_url = if let Some(aux_data_for_partial_circuit) = aux_data_for_partial_circuit {
+        object_store
+            .put(
+                circuit_key,
+                &CircuitWrapper::BasePartial((circuit, aux_data_for_partial_circuit)),
+            )
+            .await
+            .unwrap()
+    } else {
+        object_store
+            .put(circuit_key, &CircuitWrapper::Base(circuit))
+            .await
+            .unwrap()
+    };
     (circuit_id, blob_url)
+}
+
+#[tracing::instrument(
+    skip_all,
+    fields(l1_batch = %block_number)
+)]
+pub async fn save_ram_premutation_queue_witness(
+    block_number: L1BatchNumber,
+    circuit_subsequence_number: usize,
+    is_sorted: bool,
+    witness: MemoryQueueStateWitnesses<GoldilocksField>,
+    object_store: Arc<dyn ObjectStore>,
+) -> String {
+    let witness_key = RamPermutationQueueWitnessKey {
+        block_number,
+        circuit_subsequence_number,
+        is_sorted,
+    };
+    object_store
+        .put(witness_key, &RamPermutationQueueWitness { witness })
+        .await
+        .unwrap()
 }
 
 #[tracing::instrument(
@@ -227,60 +231,13 @@ pub async fn load_proofs_for_job_ids(
     job_ids: &[u32],
     object_store: &dyn ObjectStore,
 ) -> Vec<FriProofWrapper> {
-    let mut proofs = Vec::with_capacity(job_ids.len());
+    let mut handles = Vec::with_capacity(job_ids.len());
     for job_id in job_ids {
-        proofs.push(object_store.get(*job_id).await.unwrap());
+        handles.push(object_store.get(*job_id));
     }
-    proofs
-}
-
-/// Loads all proofs for a given recursion tip's job ids.
-/// Note that recursion tip may not have proofs for some specific circuits (because the batch didn't contain them).
-/// In this scenario, we still need to pass a proof, but it won't be taken into account during proving.
-/// For this scenario, we use an empty_proof, but any proof would suffice.
-#[tracing::instrument(skip_all)]
-pub async fn load_proofs_for_recursion_tip(
-    job_ids: Vec<(u8, u32)>,
-    object_store: &dyn ObjectStore,
-) -> anyhow::Result<Vec<ZkSyncRecursionProof>> {
-    let job_mapping: HashMap<u8, u32> = job_ids
+    futures::future::join_all(handles)
+        .await
         .into_iter()
-        .map(|(leaf_circuit_id, job_id)| {
-            (
-                ZkSyncRecursionLayerStorageType::from_leaf_u8_to_basic_u8(leaf_circuit_id),
-                job_id,
-            )
-        })
-        .collect();
-
-    let empty_proof = empty_node_proof().into_inner();
-
-    let mut proofs = Vec::new();
-    for circuit_id in BaseLayerCircuitType::as_iter_u8() {
-        if job_mapping.contains_key(&circuit_id) {
-            let fri_proof_wrapper = object_store
-                .get(*job_mapping.get(&circuit_id).unwrap())
-                .await
-                .unwrap_or_else(|_| {
-                    panic!(
-                        "Failed to load proof with circuit_id {} for recursion tip",
-                        circuit_id
-                    )
-                });
-            match fri_proof_wrapper {
-                FriProofWrapper::Base(_) => {
-                    return Err(anyhow::anyhow!(
-                        "Expected only recursive proofs for recursion tip, got Base for circuit {}",
-                        circuit_id
-                    ));
-                }
-                FriProofWrapper::Recursive(recursive_proof) => {
-                    proofs.push(recursive_proof.into_inner());
-                }
-            }
-        } else {
-            proofs.push(empty_proof.clone());
-        }
-    }
-    Ok(proofs)
+        .map(|x| x.unwrap())
+        .collect()
 }

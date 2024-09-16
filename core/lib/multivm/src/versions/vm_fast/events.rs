@@ -1,6 +1,8 @@
-use vm2::Event;
-use zksync_types::{L1BatchNumber, VmEvent, H256};
+use zksync_types::{L1BatchNumber, H256};
 use zksync_utils::h256_to_account_address;
+use zksync_vm2::Event;
+
+use crate::interface::VmEvent;
 
 #[derive(Clone)]
 struct EventAccumulator {
