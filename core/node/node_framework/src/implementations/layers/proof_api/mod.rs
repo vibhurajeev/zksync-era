@@ -1,18 +1,24 @@
 use std::convert::Infallible;
 use std::{
-    //borrow::Borrow,
-    //sync::Arc,
     collections::HashMap,
+    //borrow::Borrow,
+    sync::Arc,
     time::Duration,
 };
 
 //Server related
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 use warp::{http::StatusCode, Filter};
 use zksync_config::ApiConfig;
 use zksync_dal::{ConnectionPool, Core, CoreDal};
-use zksync_types::{commitment::L1BatchWithMetadata, L1BatchNumber};
+use zksync_object_store::{bincode, ObjectStore};
+use zksync_prover_interface::outputs::L1BatchProofForL1;
+use zksync_types::{
+    commitment::L1BatchWithMetadata,
+    protocol_version::{ProtocolSemanticVersion, VersionPatch},
+    L1BatchNumber, ProtocolVersionId,
+};
 
 //use zksync_prover_interface::outputs::L1BatchProofForL1;
 //use zksync_types::protocol_version::{L1VerifierConfig, ProtocolSemanticVersion};
@@ -26,10 +32,16 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct MockStruct {
-    //blob_store: Arc<dyn ObjectStore>,
+    blob_store: Arc<dyn ObjectStore>,
     pool: ConnectionPool<Core>,
     port: u16,
     // l1_verifier_config: L1VerifierConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProofWithL1BatchMetaData {
+    bytes: Vec<u8>,
+    metadata: L1BatchWithMetadata,
 }
 
 pub struct MockStructLayer(pub u16);
@@ -53,13 +65,13 @@ impl MockStructLayer {
 
 impl MockStruct {
     pub fn new(
-        //blob_store: Arc<dyn ObjectStore>,
+        blob_store: Arc<dyn ObjectStore>,
         pool: ConnectionPool<Core>,
         port: u16,
         //  l1_verifier_config: L1VerifierConfig,
     ) -> Self {
         Self {
-            //  blob_store,
+            blob_store,
             pool,
             port,
             //  l1_verifier_config,
@@ -69,7 +81,7 @@ impl MockStruct {
     pub async fn get_metadata(
         &self,
         batch_number: u32,
-    ) -> Result<Option<L1BatchWithMetadata>, String> {
+    ) -> Result<Option<ProofWithL1BatchMetaData>, String> {
         let mut storage = self
             .pool
             .connection_tagged("proof_api")
@@ -82,7 +94,26 @@ impl MockStruct {
             .await
             .map_err(|e| e.to_string())?;
 
-        Ok(metadata)
+        let protocol_version = ProtocolSemanticVersion {
+            minor: ProtocolVersionId::Version24,
+            patch: VersionPatch(2),
+        };
+
+        let proof = self
+            .blob_store
+            .get::<L1BatchProofForL1>((L1BatchNumber(batch_number), protocol_version))
+            .await
+            .map_err(|e| e.to_string())
+            .unwrap();
+
+        let serialized_proof = bincode::serialize(&proof).unwrap();
+
+        let final_proof = ProofWithL1BatchMetaData {
+            bytes: serialized_proof,
+            metadata: metadata.unwrap(),
+        };
+
+        Ok(Some(final_proof))
     }
 }
 
@@ -114,11 +145,7 @@ impl WiringLayer for MockStructLayer {
 
         let master_pool = input.master_pool.get().await.unwrap();
         Ok(Output {
-            mock: MockStruct::new(
-                //input.object_store.0,
-                master_pool,
-                self.0,
-            ),
+            mock: MockStruct::new(input.object_store.0, master_pool, self.0),
         })
     }
 }
@@ -131,7 +158,7 @@ impl Task for MockStruct {
 
     async fn run(self: Box<Self>, stop_receiver: StopReceiver) -> anyhow::Result<()> {
         let port = self.port;
-        let api = warp::path("metadata")
+        let proof_with_metadata_api = warp::path("metadata")
             .and(warp::query::<std::collections::HashMap<String, String>>())
             .and(warp::any().map(move || self.clone()))
             .and_then(
@@ -162,8 +189,9 @@ impl Task for MockStruct {
             );
 
         // Start the API server on a fixed port
-        let (_, server) =
-            warp::serve(api).bind_with_graceful_shutdown(([127, 0, 0, 1], port), async move {
+        let (_, server) = warp::serve(proof_with_metadata_api).bind_with_graceful_shutdown(
+            ([127, 0, 0, 1], port),
+            async move {
                 loop {
                     // Check if the stop signal has been received
                     if *stop_receiver.0.borrow() {
@@ -171,7 +199,8 @@ impl Task for MockStruct {
                     }
                     sleep(Duration::from_secs(1)).await;
                 }
-            });
+            },
+        );
 
         println!("API server is running on http://127.0.0.1:{}", port);
 
