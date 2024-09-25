@@ -5,13 +5,13 @@ use zksync_test_account::Account;
 use zksync_types::{
     get_code_key, get_known_code_key,
     l2_to_l1_log::{L2ToL1Log, UserL2ToL1Log},
-    storage_writes_deduplicator::StorageWritesDeduplicator,
     Execute, ExecuteTransactionCommon, K256PrivateKey, U256,
 };
 use zksync_utils::u256_to_h256;
 
 use crate::{
-    interface::{TxExecutionMode, VmExecutionMode, VmInterface},
+    interface::{TxExecutionMode, VmExecutionMode, VmInterface, VmInterfaceExt},
+    utils::StorageWritesDeduplicator,
     vm_latest::{
         tests::{
             tester::{TxType, VmTesterBuilder},
@@ -173,7 +173,7 @@ fn test_l1_tx_execution_high_gas_limit() {
 
     let mut tx = account.get_l1_tx(
         Execute {
-            contract_address: L1_MESSENGER_ADDRESS,
+            contract_address: Some(L1_MESSENGER_ADDRESS),
             value: 0.into(),
             factory_deps: vec![],
             calldata,

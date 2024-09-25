@@ -1,6 +1,5 @@
 use zk_evm_1_5_0::aux_structures::Timestamp;
 use zksync_contracts::{deployer_contract, load_sys_contract, read_bytecode};
-use zksync_state::WriteStorage;
 use zksync_test_account::TxType;
 use zksync_types::{
     ethabi::{Contract, Token},
@@ -15,8 +14,8 @@ use zksync_utils::{bytecode::hash_bytecode, bytes_to_be_words, h256_to_u256, u25
 use super::utils::{get_complex_upgrade_abi, read_test_contract};
 use crate::{
     interface::{
-        ExecutionResult, Halt, TxExecutionMode, VmExecutionMode, VmInterface,
-        VmInterfaceHistoryEnabled,
+        storage::WriteStorage, ExecutionResult, Halt, TxExecutionMode, VmExecutionMode,
+        VmInterface, VmInterfaceExt, VmInterfaceHistoryEnabled,
     },
     vm_latest::{
         tests::{
@@ -277,7 +276,7 @@ fn get_forced_deploy_tx(deployment: &[ForceDeployment]) -> Transaction {
         .expect("failed to encode parameters");
 
     let execute = Execute {
-        contract_address: CONTRACT_DEPLOYER_ADDRESS,
+        contract_address: Some(CONTRACT_DEPLOYER_ADDRESS),
         calldata,
         factory_deps: vec![],
         value: U256::zero(),
@@ -327,7 +326,7 @@ fn get_complex_upgrade_tx(
         .unwrap();
 
     let execute = Execute {
-        contract_address: COMPLEX_UPGRADER_ADDRESS,
+        contract_address: Some(COMPLEX_UPGRADER_ADDRESS),
         calldata: complex_upgrader_calldata,
         factory_deps: vec![],
         value: U256::zero(),

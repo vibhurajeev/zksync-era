@@ -1,6 +1,5 @@
 use ethabi::Token;
 use zksync_eth_signer::{EthereumSigner, TransactionParameters};
-use zksync_state::ReadStorage;
 use zksync_system_constants::L2_BASE_TOKEN_ADDRESS;
 use zksync_types::{
     fee::Fee, l2::L2Tx, transaction_request::TransactionRequest,
@@ -10,7 +9,10 @@ use zksync_types::{
 use zksync_utils::h256_to_u256;
 
 use crate::{
-    interface::{TxExecutionMode, VmExecutionMode, VmInterface},
+    interface::{
+        storage::ReadStorage, TxExecutionMode, VmExecutionMode, VmInterface, VmInterfaceExt,
+    },
+    versions::testonly::ContractToDeploy,
     vm_fast::tests::{
         tester::{Account, VmTester, VmTesterBuilder},
         utils::read_many_owners_custom_account_contract,
@@ -25,7 +27,7 @@ impl VmTester {
         );
         self.vm
             .inner
-            .world_diff
+            .world_diff()
             .get_storage_state()
             .get(&(L2_BASE_TOKEN_ADDRESS, h256_to_u256(*key.key())))
             .copied()
@@ -49,7 +51,10 @@ async fn test_require_eip712() {
     let (bytecode, contract) = read_many_owners_custom_account_contract();
     let mut vm = VmTesterBuilder::new()
         .with_empty_in_memory_storage()
-        .with_custom_contracts(vec![(bytecode, account_abstraction.address, true)])
+        .with_custom_contracts(vec![ContractToDeploy::account(
+            bytecode,
+            account_abstraction.address,
+        )])
         .with_execution_mode(TxExecutionMode::VerifyExecute)
         .with_rich_accounts(vec![account_abstraction.clone(), private_account.clone()])
         .build();
@@ -67,7 +72,7 @@ async fn test_require_eip712() {
 
     let tx = private_account.get_l2_tx_for_execute(
         Execute {
-            contract_address: account_abstraction.address,
+            contract_address: Some(account_abstraction.address),
             calldata: encoded_input,
             value: Default::default(),
             factory_deps: vec![],
@@ -124,7 +129,7 @@ async fn test_require_eip712() {
 
     // // Now send the 'classic' EIP712 transaction
     let tx_712 = L2Tx::new(
-        beneficiary.address,
+        Some(beneficiary.address),
         vec![],
         Nonce(1),
         Fee {

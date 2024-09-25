@@ -3,6 +3,7 @@ use std::{path::PathBuf, str::FromStr};
 use anyhow::{bail, Context};
 use clap::{Parser, ValueEnum};
 use common::{Prompt, PromptConfirm, PromptSelect};
+use config::forge_interface::deploy_ecosystem::output::Erc20Token;
 use serde::{Deserialize, Serialize};
 use slugify_rs::slugify;
 use strum::{Display, EnumIter, IntoEnumIterator};
@@ -64,6 +65,8 @@ pub struct ChainCreateArgs {
     base_token_price_denominator: Option<u64>,
     #[clap(long, help = MSG_SET_AS_DEFAULT_HELP, default_missing_value = "true", num_args = 0..=1)]
     pub(crate) set_as_default: Option<bool>,
+    #[clap(long, default_value = "false")]
+    pub(crate) legacy_bridge: bool,
 }
 
 impl ChainCreateArgs {
@@ -71,6 +74,7 @@ impl ChainCreateArgs {
         self,
         number_of_chains: u32,
         l1_network: &L1Network,
+        possible_erc20: Vec<Erc20Token>,
     ) -> anyhow::Result<ChainCreateArgsFinal> {
         let mut chain_name = self
             .chain_name
@@ -151,14 +155,24 @@ impl ChainCreateArgs {
             && self.base_token_price_denominator.is_none()
             && self.base_token_price_nominator.is_none()
         {
-            let base_token_selection =
-                PromptSelect::new(MSG_BASE_TOKEN_SELECTION_PROMPT, BaseTokenSelection::iter())
-                    .ask();
+            let mut token_selection: Vec<_> =
+                BaseTokenSelection::iter().map(|a| a.to_string()).collect();
 
-            match base_token_selection {
-                BaseTokenSelection::Eth => BaseToken::eth(),
-                BaseTokenSelection::Custom => {
-                    let address = Prompt::new(MSG_BASE_TOKEN_ADDRESS_PROMPT).ask();
+            let erc20_tokens = &mut (possible_erc20
+                .iter()
+                .map(|t| format!("{:?}", t.address))
+                .collect());
+            token_selection.append(erc20_tokens);
+            let base_token_selection =
+                PromptSelect::new(MSG_BASE_TOKEN_SELECTION_PROMPT, token_selection).ask();
+            match base_token_selection.as_str() {
+                "Eth" => BaseToken::eth(),
+                other => {
+                    let address = if other == "Custom" {
+                        Prompt::new(MSG_BASE_TOKEN_ADDRESS_PROMPT).ask()
+                    } else {
+                        H160::from_str(other)?
+                    };
                     let nominator = Prompt::new(MSG_BASE_TOKEN_PRICE_NOMINATOR_PROMPT)
                         .validate_with(number_validator)
                         .ask();
@@ -212,6 +226,7 @@ impl ChainCreateArgs {
             wallet_path,
             base_token,
             set_as_default,
+            legacy_bridge: self.legacy_bridge,
         })
     }
 }
@@ -226,6 +241,7 @@ pub struct ChainCreateArgsFinal {
     pub wallet_path: Option<PathBuf>,
     pub base_token: BaseToken,
     pub set_as_default: bool,
+    pub legacy_bridge: bool,
 }
 
 #[derive(Debug, Clone, EnumIter, Display, PartialEq, Eq)]

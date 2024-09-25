@@ -2,14 +2,17 @@ use std::{cell::RefCell, rc::Rc};
 
 use once_cell::sync::Lazy;
 use zksync_contracts::{
-    load_sys_contract, read_bootloader_code, read_sys_contract_bytecode, read_zbin_bytecode,
+    load_sys_contract, read_bootloader_code, read_bytecode_from_path, read_sys_contract_bytecode,
     BaseSystemContracts, ContractLanguage, SystemContractCode,
 };
 use zksync_multivm::{
     interface::{
-        dyn_tracers::vm_1_5_0::DynTracer, tracer::VmExecutionStopReason, L1BatchEnv, L2BlockEnv,
-        SystemEnv, TxExecutionMode, VmExecutionMode, VmFactory, VmInterface,
+        storage::{InMemoryStorage, StorageView, WriteStorage},
+        tracer::VmExecutionStopReason,
+        L1BatchEnv, L2BlockEnv, SystemEnv, TxExecutionMode, VmExecutionMode, VmFactory,
+        VmInterface, VmInterfaceExt,
     },
+    tracers::dynamic::vm_1_5_0::DynTracer,
     vm_latest::{
         constants::{BATCH_COMPUTATIONAL_GAS_LIMIT, BOOTLOADER_HEAP_PAGE},
         BootloaderState, HistoryEnabled, HistoryMode, SimpleMemory, ToTracerPointer, Vm, VmTracer,
@@ -17,7 +20,6 @@ use zksync_multivm::{
     },
     zk_evm_latest::aux_structures::Timestamp,
 };
-use zksync_state::{InMemoryStorage, StorageView, WriteStorage};
 use zksync_types::{
     block::L2BlockHasher, ethabi::Token, fee::Fee, fee_model::BatchFeeInput, l1::L1Tx, l2::L2Tx,
     utils::storage_key_for_eth_balance, AccountTreeId, Address, Execute, K256PrivateKey,
@@ -87,7 +89,7 @@ pub(super) fn get_l2_tx(
     pubdata_price: u32,
 ) -> L2Tx {
     L2Tx::new_signed(
-        contract_address,
+        Some(contract_address),
         vec![],
         Nonce(0),
         Fee {
@@ -132,7 +134,7 @@ pub(super) fn get_l1_tx(
 ) -> L1Tx {
     L1Tx {
         execute: Execute {
-            contract_address,
+            contract_address: Some(contract_address),
             calldata: custom_calldata.unwrap_or_default(),
             value: U256::from(0),
             factory_deps,
@@ -167,9 +169,8 @@ pub(super) fn get_l1_txs(number_of_txs: usize) -> (Vec<Transaction>, Vec<Transac
 }
 
 fn read_bootloader_test_code(test: &str) -> Vec<u8> {
-    read_zbin_bytecode(format!(
-        "contracts/system-contracts/bootloader/tests/artifacts/{}.yul.zbin",
-        test
+    read_bytecode_from_path(format!(
+        "contracts/system-contracts/zkout/{test}.yul/contracts-preprocessed/bootloader/{test}.yul.json",
     ))
 }
 

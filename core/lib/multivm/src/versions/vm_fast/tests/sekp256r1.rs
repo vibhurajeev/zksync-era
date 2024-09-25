@@ -4,9 +4,8 @@ use zksync_types::{web3::keccak256, Execute, H256, U256};
 use zksync_utils::h256_to_u256;
 
 use crate::{
-    interface::{TxExecutionMode, VmExecutionMode, VmInterface},
+    interface::{ExecutionResult, TxExecutionMode, VmExecutionMode, VmInterface, VmInterfaceExt},
     vm_fast::tests::tester::VmTesterBuilder,
-    vm_latest::ExecutionResult,
 };
 
 #[test]
@@ -49,7 +48,7 @@ fn test_sekp256r1() {
 
     let tx = account.get_l2_tx_for_execute(
         Execute {
-            contract_address: P256VERIFY_PRECOMPILE_ADDRESS,
+            contract_address: Some(P256VERIFY_PRECOMPILE_ADDRESS),
             calldata: [digest, encoded_r, encoded_s, x, y].concat(),
             value: U256::zero(),
             factory_deps: vec![],

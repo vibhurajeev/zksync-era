@@ -6,12 +6,17 @@ use config::{EcosystemConfig, DOCKER_COMPOSE_FILE, ERA_OBSERVABILITY_COMPOSE_FIL
 use xshell::Shell;
 
 use super::args::ContainersArgs;
-use crate::messages::{
-    MSG_CONTAINERS_STARTED, MSG_FAILED_TO_FIND_ECOSYSTEM_ERR, MSG_RETRY_START_CONTAINERS_PROMPT,
-    MSG_STARTING_CONTAINERS, MSG_STARTING_DOCKER_CONTAINERS_SPINNER,
+use crate::{
+    commands::ecosystem::setup_observability,
+    messages::{
+        MSG_CONTAINERS_STARTED, MSG_FAILED_TO_FIND_ECOSYSTEM_ERR,
+        MSG_RETRY_START_CONTAINERS_PROMPT, MSG_STARTING_CONTAINERS,
+        MSG_STARTING_DOCKER_CONTAINERS_SPINNER,
+    },
 };
 
 pub fn run(shell: &Shell, args: ContainersArgs) -> anyhow::Result<()> {
+    let args = args.fill_values_with_prompt();
     let ecosystem = EcosystemConfig::from_file(shell).context(MSG_FAILED_TO_FIND_ECOSYSTEM_ERR)?;
 
     initialize_docker(shell, &ecosystem)?;
@@ -19,6 +24,10 @@ pub fn run(shell: &Shell, args: ContainersArgs) -> anyhow::Result<()> {
     logger::info(MSG_STARTING_CONTAINERS);
 
     let spinner = Spinner::new(MSG_STARTING_DOCKER_CONTAINERS_SPINNER);
+    if args.observability {
+        setup_observability::run(shell)?;
+    }
+
     start_containers(shell, args.observability)?;
     spinner.finish();
 
@@ -39,7 +48,7 @@ pub fn initialize_docker(shell: &Shell, ecosystem: &EcosystemConfig) -> anyhow::
 }
 
 fn start_container(shell: &Shell, compose_file: &str, retry_msg: &str) -> anyhow::Result<()> {
-    while let Err(err) = docker::up(shell, compose_file) {
+    while let Err(err) = docker::up(shell, compose_file, true) {
         logger::error(err.to_string());
         if !common::PromptConfirm::new(retry_msg).default(true).ask() {
             return Err(err);

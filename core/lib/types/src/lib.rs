@@ -8,7 +8,6 @@
 use std::{fmt, fmt::Debug};
 
 use anyhow::Context as _;
-pub use event::{VmEvent, VmEventGroupKey};
 use fee::encoding_len;
 pub use l1::L1TxCommonData;
 pub use l2::L2TxCommonData;
@@ -34,11 +33,9 @@ pub mod abi;
 pub mod aggregated_operations;
 pub mod blob;
 pub mod block;
-pub mod circuit;
 pub mod commitment;
 pub mod contract_verification_api;
 pub mod debug_flat_call;
-pub mod event;
 pub mod fee;
 pub mod fee_model;
 pub mod l1;
@@ -49,11 +46,9 @@ pub mod protocol_upgrade;
 pub mod pubdata_da;
 pub mod snapshots;
 pub mod storage;
-pub mod storage_writes_deduplicator;
 pub mod system_contracts;
 pub mod tokens;
 pub mod tx;
-pub mod vm_trace;
 pub mod zk_evm_types;
 
 pub mod api;
@@ -109,7 +104,7 @@ impl Eq for Transaction {}
 
 impl Transaction {
     /// Returns recipient account of the transaction.
-    pub fn recipient_account(&self) -> Address {
+    pub fn recipient_account(&self) -> Option<Address> {
         self.execute.contract_address
     }
 
@@ -258,7 +253,7 @@ impl TryFrom<Transaction> for abi::Transaction {
                 tx: abi::L2CanonicalTransaction {
                     tx_type: PRIORITY_OPERATION_L2_TX_TYPE.into(),
                     from: address_to_u256(&data.sender),
-                    to: address_to_u256(&tx.execute.contract_address),
+                    to: address_to_u256(&tx.execute.contract_address.unwrap_or_default()),
                     gas_limit: data.gas_limit,
                     gas_per_pubdata_byte_limit: data.gas_per_pubdata_limit,
                     max_fee_per_gas: data.max_fee_per_gas,
@@ -289,7 +284,7 @@ impl TryFrom<Transaction> for abi::Transaction {
                 tx: abi::L2CanonicalTransaction {
                     tx_type: PROTOCOL_UPGRADE_TX_TYPE.into(),
                     from: address_to_u256(&data.sender),
-                    to: address_to_u256(&tx.execute.contract_address),
+                    to: address_to_u256(&tx.execute.contract_address.unwrap_or_default()),
                     gas_limit: data.gas_limit,
                     gas_per_pubdata_byte_limit: data.gas_per_pubdata_limit,
                     max_fee_per_gas: data.max_fee_per_gas,
@@ -382,7 +377,7 @@ impl TryFrom<abi::Transaction> for Transaction {
                         unknown_type => anyhow::bail!("unknown tx type {unknown_type}"),
                     },
                     execute: Execute {
-                        contract_address: u256_to_account_address(&tx.to),
+                        contract_address: Some(u256_to_account_address(&tx.to)),
                         calldata: tx.data,
                         factory_deps,
                         value: tx.value,

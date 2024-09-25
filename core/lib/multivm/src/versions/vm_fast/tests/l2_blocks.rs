@@ -3,7 +3,6 @@
 //! The description for each of the tests can be found in the corresponding `.yul` file.
 //!
 
-use zksync_state::ReadStorage;
 use zksync_system_constants::REQUIRED_L1_TO_L2_GAS_PER_PUBDATA_BYTE;
 use zksync_types::{
     block::{pack_block_info, L2BlockHasher},
@@ -15,11 +14,12 @@ use zksync_types::{
 use zksync_utils::{h256_to_u256, u256_to_h256};
 
 use crate::{
-    interface::{ExecutionResult, Halt, L2BlockEnv, TxExecutionMode, VmExecutionMode, VmInterface},
-    vm_fast::{
-        tests::tester::{default_l1_batch, VmTesterBuilder},
-        vm::Vm,
+    interface::{
+        storage::ReadStorage, ExecutionResult, Halt, L2BlockEnv, TxExecutionMode, VmExecutionMode,
+        VmInterface, VmInterfaceExt,
     },
+    versions::testonly::default_l1_batch,
+    vm_fast::{tests::tester::VmTesterBuilder, vm::Vm},
     vm_latest::{
         constants::{TX_OPERATOR_L2_BLOCK_INFO_OFFSET, TX_OPERATOR_SLOTS_PER_L2_BLOCK_INFO},
         utils::l2_blocks::get_l2_block_hash_key,
@@ -35,7 +35,7 @@ fn get_l1_noop() -> Transaction {
             ..Default::default()
         }),
         execute: Execute {
-            contract_address: H160::zero(),
+            contract_address: Some(H160::zero()),
             calldata: vec![],
             value: U256::zero(),
             factory_deps: vec![],
