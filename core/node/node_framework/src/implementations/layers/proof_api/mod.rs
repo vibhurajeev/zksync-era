@@ -6,19 +6,26 @@ use std::{
     time::Duration,
 };
 
+use anyhow::Context;
 //Server related
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 use warp::{http::StatusCode, Filter};
 use zksync_config::ApiConfig;
 use zksync_dal::{ConnectionPool, Core, CoreDal};
+use zksync_l1_contract_interface::i_executor::commit::kzg::pubdata_to_blob_commitments;
 use zksync_object_store::{bincode, ObjectStore};
 use zksync_prover_interface::outputs::L1BatchProofForL1;
+use zksync_types::blob::num_blobs_required;
+use zksync_types::commitment::{CommitmentCommonInput, CommitmentInput};
+use zksync_types::writes::{InitialStorageWrite, RepeatedStorageWrite, StateDiffRecord};
 use zksync_types::{
     commitment::L1BatchWithMetadata,
     protocol_version::{ProtocolSemanticVersion, VersionPatch},
     L1BatchNumber, ProtocolVersionId,
 };
+use zksync_types::{StorageKey, H256, U256};
+use zksync_utils::h256_to_u256;
 
 //use zksync_prover_interface::outputs::L1BatchProofForL1;
 //use zksync_types::protocol_version::{L1VerifierConfig, ProtocolSemanticVersion};
@@ -81,7 +88,8 @@ impl MockStruct {
     pub async fn get_metadata(
         &self,
         batch_number: u32,
-    ) -> Result<Option<ProofWithL1BatchMetaData>, String> {
+    ) -> Result<Option<(ProofWithL1BatchMetaData, Vec<H256>)>, String> {
+        let l1_batch_number: L1BatchNumber = L1BatchNumber(batch_number);
         let mut storage = self
             .pool
             .connection_tagged("proof_api")
@@ -90,18 +98,41 @@ impl MockStruct {
 
         let metadata = storage
             .blocks_dal()
-            .get_l1_batch_metadata(L1BatchNumber(batch_number))
+            .get_l1_batch_metadata(l1_batch_number)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?
+            .unwrap();
 
-        let protocol_version = ProtocolSemanticVersion {
-            minor: ProtocolVersionId::Version24,
+        // TODO(PLA-731): ensure that the protocol version is always available.
+        let protocol_version = metadata
+            .header
+            .protocol_version
+            .unwrap_or_else(ProtocolVersionId::last_potentially_undefined);
+
+        let protocol_semantic_version = ProtocolSemanticVersion {
+            minor: protocol_version,
+            //TODO: Check if below patch requires manual updates.
             patch: VersionPatch(2),
+        };
+
+        let blob_commitments = if protocol_version.is_post_1_4_2() {
+            let pubdata_input: Vec<u8> = metadata
+                .header
+                .pubdata_input
+                .clone()
+                .with_context(|| {
+                    format!("`pubdata_input` is missing for L1 batch #{l1_batch_number}")
+                })
+                .map_err(|e| e.to_string())?;
+
+            pubdata_to_blob_commitments(num_blobs_required(&protocol_version), &pubdata_input)
+        } else {
+            vec![H256::zero(); num_blobs_required(&protocol_version)]
         };
 
         let proof = self
             .blob_store
-            .get::<L1BatchProofForL1>((L1BatchNumber(batch_number), protocol_version))
+            .get::<L1BatchProofForL1>((L1BatchNumber(batch_number), protocol_semantic_version))
             .await
             .map_err(|e| e.to_string())
             .unwrap();
@@ -110,10 +141,10 @@ impl MockStruct {
 
         let final_proof = ProofWithL1BatchMetaData {
             bytes: serialized_proof,
-            metadata: metadata.unwrap(),
+            metadata: metadata,
         };
 
-        Ok(Some(final_proof))
+        Ok(Some((final_proof, blob_commitments)))
     }
 }
 
