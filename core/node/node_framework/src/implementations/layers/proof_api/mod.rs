@@ -16,15 +16,13 @@ use zksync_dal::{ConnectionPool, Core, CoreDal};
 use zksync_l1_contract_interface::i_executor::commit::kzg::pubdata_to_blob_commitments;
 use zksync_object_store::{bincode, ObjectStore};
 use zksync_prover_interface::outputs::L1BatchProofForL1;
-use zksync_types::blob::num_blobs_required;
-use zksync_types::commitment::{CommitmentCommonInput, CommitmentInput};
-use zksync_types::writes::{InitialStorageWrite, RepeatedStorageWrite, StateDiffRecord};
 use zksync_types::{
-    commitment::L1BatchWithMetadata,
+    blob::num_blobs_required,
+    commitment::{CommitmentCommonInput, CommitmentInput, L1BatchWithMetadata},
     protocol_version::{ProtocolSemanticVersion, VersionPatch},
-    L1BatchNumber, ProtocolVersionId,
+    writes::{InitialStorageWrite, RepeatedStorageWrite, StateDiffRecord},
+    L1BatchNumber, ProtocolVersionId, StorageKey, H256, U256,
 };
-use zksync_types::{StorageKey, H256, U256};
 use zksync_utils::h256_to_u256;
 
 //use zksync_prover_interface::outputs::L1BatchProofForL1;
