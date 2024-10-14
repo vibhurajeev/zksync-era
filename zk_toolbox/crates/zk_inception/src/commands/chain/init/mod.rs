@@ -80,7 +80,7 @@ pub async fn init(
     let init_configs_args = InitConfigsArgsFinal::from_chain_init_args(init_args);
     let mut contracts_config =
         init_configs(&init_configs_args, shell, ecosystem_config, chain_config).await?;
-        
+
     // Fund some wallet addresses with ETH or base token (only for Localhost)
     distribute_eth(ecosystem_config, chain_config, init_args.l1_rpc_url.clone()).await?;
     mint_base_token(ecosystem_config, chain_config, init_args.l1_rpc_url.clone()).await?;
@@ -107,7 +107,7 @@ pub async fn init(
         shell,
         ecosystem_config,
         contracts_config.l1.chain_admin_addr,
-        chain_config.get_wallets_config()?.governor_private_key(),
+        &chain_config.get_wallets_config()?.governor,
         contracts_config.l1.diamond_proxy_addr,
         &init_args.forge_args.clone(),
         init_args.l1_rpc_url.clone(),
@@ -121,7 +121,7 @@ pub async fn init(
         set_token_multiplier_setter(
             shell,
             ecosystem_config,
-            chain_config.get_wallets_config()?.governor_private_key(),
+            &chain_config.get_wallets_config()?.governor,
             contracts_config.l1.chain_admin_addr,
             chain_config
                 .get_wallets_config()
@@ -178,6 +178,6 @@ pub async fn init(
     genesis(init_args.genesis_args.clone(), shell, chain_config)
         .await
         .context(MSG_GENESIS_DATABASE_ERR)?;
-    
+
     Ok(())
 }
