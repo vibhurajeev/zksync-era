@@ -13,16 +13,22 @@ use tokio::time::sleep;
 use warp::{http::StatusCode, Filter};
 use zksync_config::ApiConfig;
 use zksync_dal::{ConnectionPool, Core, CoreDal};
-use zksync_l1_contract_interface::i_executor::commit::kzg::pubdata_to_blob_commitments;
+use zksync_l1_contract_interface::i_executor::commit::kzg::{
+    pubdata_to_blob_commitments, KzgInfo, ZK_SYNC_BYTES_PER_BLOB,
+};
 use zksync_object_store::{bincode, ObjectStore};
 use zksync_prover_interface::outputs::L1BatchProofForL1;
 use zksync_types::{
     blob::num_blobs_required,
     commitment::{CommitmentCommonInput, CommitmentInput, L1BatchWithMetadata},
+    eth_sender::SidecarBlobV1,
+    ethabi::Token,
     protocol_version::{ProtocolSemanticVersion, VersionPatch},
     writes::{InitialStorageWrite, RepeatedStorageWrite, StateDiffRecord},
     L1BatchNumber, ProtocolVersionId, StorageKey, H256, U256,
 };
+
+use crypto_codegen::serialize_proof;
 use zksync_utils::h256_to_u256;
 
 //use zksync_prover_interface::outputs::L1BatchProofForL1;
@@ -43,9 +49,11 @@ pub struct MockStruct {
     // l1_verifier_config: L1VerifierConfig,
 }
 
+const PUBDATA_SOURCE_BLOBS: u8 = 1;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProofWithL1BatchMetaData {
-    bytes: Vec<u8>,
+    bytes: Token,
     metadata: L1BatchWithMetadata,
 }
 
@@ -86,7 +94,7 @@ impl MockStruct {
     pub async fn get_metadata(
         &self,
         batch_number: u32,
-    ) -> Result<Option<(ProofWithL1BatchMetaData, Vec<H256>)>, String> {
+    ) -> Result<Option<(ProofWithL1BatchMetaData, Vec<H256>, Vec<u8>, Vec<[u8; 32]>)>, String> {
         let l1_batch_number: L1BatchNumber = L1BatchNumber(batch_number);
         let mut storage = self
             .pool
@@ -113,7 +121,9 @@ impl MockStruct {
             patch: VersionPatch(2),
         };
 
-        let blob_commitments = if protocol_version.is_post_1_4_2() {
+        let (pubdata_commitments, blob_commitments, versioned_hashes) = if protocol_version
+            .is_post_1_4_2()
+        {
             let pubdata_input: Vec<u8> = metadata
                 .header
                 .pubdata_input
@@ -123,26 +133,90 @@ impl MockStruct {
                 })
                 .map_err(|e| e.to_string())?;
 
-            pubdata_to_blob_commitments(num_blobs_required(&protocol_version), &pubdata_input)
+            let pubdata_commitments =
+                pubdata_input
+                    .chunks(ZK_SYNC_BYTES_PER_BLOB)
+                    .flat_map(|blob| {
+                        let kzg_info = KzgInfo::new(blob);
+                        kzg_info.to_pubdata_commitment()
+                    });
+
+            let versioned_hashes = metadata
+                .header
+                .pubdata_input
+                .clone()
+                .unwrap()
+                .chunks(ZK_SYNC_BYTES_PER_BLOB)
+                .map(|blob| {
+                    let kzg_info = KzgInfo::new(blob);
+                    kzg_info.versioned_hash
+                })
+                .collect::<Vec<[u8; 32]>>();
+
+            (
+                std::iter::once(PUBDATA_SOURCE_BLOBS)
+                    .chain(pubdata_commitments.clone())
+                    .collect::<Vec<_>>(),
+                pubdata_to_blob_commitments(num_blobs_required(&protocol_version), &pubdata_input),
+                versioned_hashes,
+            )
         } else {
-            vec![H256::zero(); num_blobs_required(&protocol_version)]
+            (
+                vec![0u8; ZK_SYNC_BYTES_PER_BLOB],
+                vec![H256::zero(); num_blobs_required(&protocol_version)],
+                vec![[0u8; 32]],
+            )
         };
 
-        let proof = self
+        // let proof = self
+        //     .blob_store
+        //     .get::<L1BatchProofForL1>((L1BatchNumber(batch_number), protocol_semantic_version))
+        //     .await
+        //     .map_err(|e| e.to_string())
+        //     .unwrap();
+
+        let proof = match self
             .blob_store
             .get::<L1BatchProofForL1>((L1BatchNumber(batch_number), protocol_semantic_version))
             .await
-            .map_err(|e| e.to_string())
-            .unwrap();
+        {
+            Ok(proof) => Some(proof),
+            Err(e) => {
+                println!("Proof not found: {}", e);
+                None
+            }
+        };
 
-        let serialized_proof = bincode::serialize(&proof).unwrap();
+        let proof_input = match proof {
+            Some(ref p) if metadata.header.protocol_version.unwrap().is_pre_boojum() => {
+                let aggregation_result_coords = Token::Array(
+                    p.aggregation_result_coords
+                        .iter()
+                        .map(|bytes| Token::Uint(U256::from_big_endian(bytes)))
+                        .collect(),
+                );
+        
+                let (_, serialized_proof) = serialize_proof(&p.scheduler_proof);
+        
+                Token::Tuple(vec![
+                    aggregation_result_coords,
+                    Token::Array(serialized_proof.into_iter().map(Token::Uint).collect()),
+                ])
+            },
+            _ => Token::Array(Vec::new()),
+        };
 
         let final_proof = ProofWithL1BatchMetaData {
-            bytes: serialized_proof,
+            bytes: proof_input,
             metadata: metadata,
         };
 
-        Ok(Some((final_proof, blob_commitments)))
+        Ok(Some((
+            final_proof,
+            blob_commitments,
+            pubdata_commitments,
+            versioned_hashes,
+        )))
     }
 }
 
