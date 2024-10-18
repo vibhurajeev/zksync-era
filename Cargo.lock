@@ -10829,6 +10829,7 @@ dependencies = [
  "zksync_prover_interface",
  "zksync_queued_job_processor",
  "zksync_reorg_detector",
+ "zksync_solidity_vk_codegen",
  "zksync_state",
  "zksync_state_keeper",
  "zksync_storage",

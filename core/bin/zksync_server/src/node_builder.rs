@@ -656,8 +656,13 @@ impl MainNodeBuilder {
     }
 
     fn add_proof_api_layer(mut self) -> anyhow::Result<Self> {
-        self.node
-            .add_layer(MockStructLayer::new(self.configs.api_config.clone()));
+        self.node.add_layer(MockStructLayer::new(
+            self.configs.api_config.clone(),
+            match self.configs.eth {
+                Some(ref i) => i.sender.clone(),
+                None => None,
+            },
+        ));
 
         Ok(self)
     }

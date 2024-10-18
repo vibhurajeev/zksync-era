@@ -11,6 +11,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 use warp::{http::StatusCode, Filter};
+use zksync_config::configs::eth_sender::{ProofSendingMode, SenderConfig};
 use zksync_config::ApiConfig;
 use zksync_dal::{ConnectionPool, Core, CoreDal};
 use zksync_l1_contract_interface::i_executor::commit::kzg::{
@@ -46,6 +47,7 @@ pub struct MockStruct {
     blob_store: Arc<dyn ObjectStore>,
     pool: ConnectionPool<Core>,
     port: u16,
+    proof_sending_mode: ProofSendingMode,
     // l1_verifier_config: L1VerifierConfig,
 }
 
@@ -57,16 +59,22 @@ pub struct ProofWithL1BatchMetaData {
     metadata: L1BatchWithMetadata,
 }
 
-pub struct MockStructLayer(pub u16);
+pub struct MockStructLayer(pub u16, pub ProofSendingMode);
 
 impl MockStructLayer {
-    pub fn new(api_configs: Option<ApiConfig>) -> Self {
+    pub fn new(api_configs: Option<ApiConfig>, eth_sender_config: Option<SenderConfig>) -> Self {
         let proof_api_port = match api_configs {
             Some(i) => i.web3_json_rpc.http_port - 20,
             None => 3030,
         };
 
-        Self(proof_api_port)
+        Self(
+            proof_api_port,
+            match eth_sender_config {
+                Some(i) => i.proof_sending_mode,
+                None => ProofSendingMode::SkipEveryProof,
+            },
+        )
     }
 }
 
@@ -81,12 +89,14 @@ impl MockStruct {
         blob_store: Arc<dyn ObjectStore>,
         pool: ConnectionPool<Core>,
         port: u16,
+        proof_sending_mode: ProofSendingMode,
         //  l1_verifier_config: L1VerifierConfig,
     ) -> Self {
         Self {
             blob_store,
             pool,
             port,
+            proof_sending_mode,
             //  l1_verifier_config,
         }
     }
@@ -168,23 +178,25 @@ impl MockStruct {
             )
         };
 
-        // let proof = self
-        //     .blob_store
-        //     .get::<L1BatchProofForL1>((L1BatchNumber(batch_number), protocol_semantic_version))
-        //     .await
-        //     .map_err(|e| e.to_string())
-        //     .unwrap();
+        let proof = match self.proof_sending_mode {
+            ProofSendingMode::OnlyRealProofs => {
+                match self
+                    .blob_store
+                    .get::<L1BatchProofForL1>((
+                        L1BatchNumber(batch_number),
+                        protocol_semantic_version,
+                    ))
+                    .await
+                {
+                    Ok(proof) => Some(proof),
+                    Err(e) => {
+                        println!("Proof not found: {}", e);
 
-        let proof = match self
-            .blob_store
-            .get::<L1BatchProofForL1>((L1BatchNumber(batch_number), protocol_semantic_version))
-            .await
-        {
-            Ok(proof) => Some(proof),
-            Err(e) => {
-                println!("Proof not found: {}", e);
-                None
+                        return Err(String::from("Proof not found"));
+                    }
+                }
             }
+            _ => None,
         };
 
         let proof_input = match proof {
@@ -195,14 +207,14 @@ impl MockStruct {
                         .map(|bytes| Token::Uint(U256::from_big_endian(bytes)))
                         .collect(),
                 );
-        
+
                 let (_, serialized_proof) = serialize_proof(&p.scheduler_proof);
-        
+
                 Token::Tuple(vec![
                     aggregation_result_coords,
                     Token::Array(serialized_proof.into_iter().map(Token::Uint).collect()),
                 ])
-            },
+            }
             _ => Token::Array(Vec::new()),
         };
 
@@ -248,7 +260,7 @@ impl WiringLayer for MockStructLayer {
 
         let master_pool = input.master_pool.get().await.unwrap();
         Ok(Output {
-            mock: MockStruct::new(input.object_store.0, master_pool, self.0),
+            mock: MockStruct::new(input.object_store.0, master_pool, self.0, self.1),
         })
     }
 }
