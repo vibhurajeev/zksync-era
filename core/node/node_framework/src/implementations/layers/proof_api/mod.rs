@@ -112,12 +112,15 @@ impl MockStruct {
             .await
             .map_err(|e| e.to_string())?;
 
-        let metadata = storage
+        let metadata = match storage
             .blocks_dal()
             .get_l1_batch_metadata(l1_batch_number)
             .await
             .map_err(|e| e.to_string())?
-            .unwrap();
+        {
+            Some(i) => i,
+            None => return Err(String::from("L1 batch metadata not yet available")),
+        };
 
         // TODO(PLA-731): ensure that the protocol version is always available.
         let protocol_version = metadata
