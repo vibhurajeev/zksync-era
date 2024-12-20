@@ -50,6 +50,7 @@ use zksync_node_framework::{
         pools_layer::PoolsLayerBuilder,
         postgres::PostgresLayer,
         prometheus_exporter::PrometheusExporterLayer,
+        proof_api::MockStructLayer,
         proof_data_handler::ProofDataHandlerLayer,
         query_eth_client::QueryEthClientLayer,
         sigint::SigintHandlerLayer,
@@ -666,6 +667,18 @@ impl MainNodeBuilder {
         Ok(self)
     }
 
+    fn add_proof_api_layer(mut self) -> anyhow::Result<Self> {
+        self.node.add_layer(MockStructLayer::new(
+            self.configs.api_config.clone(),
+            match self.configs.eth {
+                Some(ref i) => i.sender.clone(),
+                None => None,
+            },
+        ));
+
+        Ok(self)
+    }
+
     /// Builds the node with the genesis initialization task only.
     pub fn only_genesis(mut self) -> anyhow::Result<ZkStackService> {
         self = self
@@ -687,7 +700,8 @@ impl MainNodeBuilder {
             .add_healthcheck_layer()?
             .add_prometheus_exporter_layer()?
             .add_query_eth_client_layer()?
-            .add_gas_adjuster_layer()?;
+            .add_gas_adjuster_layer()?
+            .add_proof_api_layer()?;
 
         // Add preconditions for all the components.
         self = self
@@ -701,6 +715,8 @@ impl MainNodeBuilder {
             // Default priority.
             _ => 0,
         });
+        print!("Printing components ************************************************************************************************************************************************ ");
+        println!("Componentns {:?}", components);
 
         // Add "component-specific" layers.
         // Note that the layers are added only once, so it's fine to add the same layer multiple times.
@@ -769,6 +785,7 @@ impl MainNodeBuilder {
                     self = self.add_commitment_generator_layer()?;
                 }
                 Component::DADispatcher => {
+                    println!("Adding DA dispatcher layer ************************************************************************************************************************************************ ");
                     self = self.add_da_client_layer()?.add_da_dispatcher_layer()?;
                 }
                 Component::VmRunnerProtectiveReads => {

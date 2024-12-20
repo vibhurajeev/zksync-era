@@ -79,6 +79,7 @@ impl DataAvailabilityDispatcher {
             .data_availability_dal()
             .get_ready_for_da_dispatch_l1_batches(self.config.max_rows_to_dispatch() as usize)
             .await?;
+        println!("Batches to send {:?}", batches);
         drop(conn);
 
         for batch in batches {
