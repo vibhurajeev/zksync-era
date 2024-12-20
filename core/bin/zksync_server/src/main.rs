@@ -90,7 +90,7 @@ impl FromStr for ComponentsToRun {
 
 fn main() -> anyhow::Result<()> {
     let opt = Cli::parse();
-
+    println!("Running zksync upstream ✅✅✅✅");  
     // Load env config and use it if file config is not provided
     let tmp_config = load_env_config()?;
 
